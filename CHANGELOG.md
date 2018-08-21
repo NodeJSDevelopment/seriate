@@ -1,4 +1,37 @@
+## 1.x
+
+### 1.0.0
+
+* Update README with atTransactionStart and atTransactionEnd details
+* Added tests for start/end hooks
+* Added tests for connection module, fixed linting errors and committed package lock
+* Added hooks for running code at the start and/or end of a transaction
+
 ## 0.7.*
+
+### 0.13.1
+
+* Added ability to bulk load multiple tables in a step
+
+### 0.13.0
+
+* Added integration tests for Tedious patch; Moved patch to a separate file; Prevented patch from being applied twice
+
+### 0.12.0
+
+* Returned a promise from a test that showed errors from a timing issue
+* Added behavior tests for Tedious patch
+* Added a sad panda monkey patch to reset connections
+
+### 0.11.0
+
+* Added asList parameter option
+
+### 0.10.0
+
+* Add useExisting option
+* Add tests for connection reuse
+* Add bulkLoadTable option
 
 ### 0.9.1
 
