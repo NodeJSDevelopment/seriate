@@ -1,8 +1,7 @@
-require( "../setup" );
-var mockConnectionFn = require( "../data/mockConnection" );
+const mockConnectionFn = require( "../data/mockConnection" );
 
 describe( "Connections", function() {
-	var connections, sql, mockConnection, config;
+	let connections, sql, mockConnection, config;
 	before( function() {
 		mockConnection = mockConnectionFn( true );
 		sql = {
@@ -10,13 +9,69 @@ describe( "Connections", function() {
 				return mockConnection;
 			}
 		};
-		connections = proxyquire( "../src/connections", {
+		connections = proxyquire( "~/src/connections", {
 			mssql: sql
 		} );
 	} );
 
+	describe( "when calling getHooks", function() {
+		describe( "with a configuration that has hooks configured", function() {
+			before( function() {
+				connections.state.configurations.testConfiggy = {
+					atTransactionStart: "START",
+					atTransactionEnd: "END"
+				};
+			} );
+
+			after( function() {
+				connections.state.configurations = {};
+			} );
+
+			it( "should return expected hooks", function() {
+				connections.getHooks( "testConfiggy" ).should.eql( {
+					atTransactionStart: "START",
+					atTransactionEnd: "END"
+				} );
+			} );
+		} );
+
+		describe( "with the default configuration", function() {
+			before( function() {
+				connections.state.configurations.default = {
+					atTransactionStart: "START",
+					atTransactionEnd: "END"
+				};
+			} );
+
+			after( function() {
+				connections.state.configurations = {};
+			} );
+
+			it( "should return expected hooks when no connection name is passed", function() {
+				connections.getHooks().should.eql( {
+					atTransactionStart: "START",
+					atTransactionEnd: "END"
+				} );
+			} );
+
+			it( "should return expected hooks when an explicit null is passed", function() {
+				connections.getHooks( null ).should.eql( {
+					atTransactionStart: "START",
+					atTransactionEnd: "END"
+				} );
+			} );
+		} );
+
+		describe( "with a configuration that does not have hooks configured", function() {
+			it( "should not return any hooks", function() {
+				connections.getHooks( "NOPE NOPE NOPE" )
+					.should.eql( { atTransactionStart: undefined, atTransactionEnd: undefined } );
+			} );
+		} );
+	} );
+
 	describe( "when requesting non-existing connection", function() {
-		var byConfig, missingConfig;
+		let byConfig, missingConfig;
 		before( function() {
 			missingConfig = {
 				name: "missing",
@@ -44,7 +99,7 @@ describe( "Connections", function() {
 	} );
 
 	describe( "when adding valid new connection without name (implicit default)", function() {
-		var connection;
+		let connection;
 		before( function() {
 			config = {
 				host: "ohhai",
@@ -70,7 +125,7 @@ describe( "Connections", function() {
 	} );
 
 	describe( "when requesting connection", function() {
-		var explicit, implicit, byConfig;
+		let explicit, implicit, byConfig;
 		before( function() {
 			explicit = connections.get( "default" );
 			implicit = connections.get();
@@ -91,7 +146,7 @@ describe( "Connections", function() {
 	} );
 
 	describe( "when requesting connection that was closed", function() {
-		var explicit, implicit, byConfig;
+		let explicit, implicit, byConfig;
 		before( function() {
 			mockConnection.raise( "close" );
 			explicit = connections.get( "default" );
@@ -113,7 +168,7 @@ describe( "Connections", function() {
 	} );
 
 	describe( "when requesting connection that had an error", function() {
-		var explicit, implicit, byConfig;
+		let explicit, implicit, byConfig;
 		before( function() {
 			mockConnection.raise( "error", [ new Error( "Just to be silly?" ) ] );
 			explicit = connections.get( "default" );

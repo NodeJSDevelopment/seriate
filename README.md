@@ -162,11 +162,35 @@ Note that the `SqlContext` instance returns from `getPlainContext` has a `step` 
 		},
 		param3Name: "param3Value"
 	},
-	multiple: false
+	multiple: false,
+	bulkLoadTable: {
+		name: "TableToBulkLoad",
+		columns: {
+			id: {
+				type: sql.INT,
+				nullable: false
+			},
+			name: {
+				type: sql.NVARCHAR(100),
+				nullable: true
+			}
+		},
+		rows: [
+			{
+				id: 246,
+				name: "Teddy Pendergrass"
+			},
+			...
+		]
+	}
 }
 ```
 
-You can only use *one* of the three sql-related fields: `query`, `procedure` or `preparedSql`. The module infers from which one you use as to how it should execute (and it's checked in that order). If your query takes params, you can provide a `params` object, where each key represents a parameter name and the value can be an object that provides the `val` and `type` (types are pulled from the `mssql` module), or the value can be a primitive value which will be passed as the paramter value. If multiple recordsets are expected from a `query` or `preparedSql`, set the `multiple` field to `true`. Multiple recordsets are automatically supported when executing a stored procedure. (NOTE: if you use multiple recordsets, your result set for a step will be an array of records sets (i.e. - nested arrays), rather than an array of a single record set).
+You can only use *one* of the four sql-related fields: `query`, `procedure`, `preparedSql`, or `bulkLoadTable`. The module infers from which one you use as to how it should execute (and it's checked in that order). If your query takes params, you can provide a `params` object, where each key represents a parameter name and the value can be an object that provides the `val` and `type` (types are pulled from the `mssql` module), or the value can be a primitive value which will be passed as the parameter value. If multiple recordsets are expected from a `query` or `preparedSql`, set the `multiple` field to `true`. Multiple recordsets are automatically supported when executing a stored procedure. (NOTE: if you use multiple recordsets, your result set for a step will be an array of records sets (i.e. - nested arrays), rather than an array of a single record set).
+
+If you need to bulk load a table, you can do that with the `bulkLoadTable` option. Just specify the `name` of the table to load, definitions of `columns` keyed by name, and an array of `rows` as shown above. Each column must have a `type` and may optionally have a `nullable` boolean, which must match the nullability of the corresponding database column. If you omit `nullable` for a column, it is assumed to be `true`. If the table does not exist, it will be created. If you need to bulk load a temporary table, just specify a name with a `#` at the beginning of its name. In this case you must use a transaction context instead of a plain context. The temporary table will automatically be dropped at the end of the transaction. The result for a `bulkLoadTable` step is the number of rows inserted.
+
+When bulk loading a temporary table, by default seriate will assume it should be a new table, and it will first drop any temporary table found with that name. If you want to override this behavior and add rows to an existing temporary table, just add a `useExisting` of `true` to your `bulkLoadTable` object.
 
 The `end` method of a `SqlContext` instance takes a callback which receives a `sets` argument. The `sets` argument contains the dataset(s) from each step (using the step `alias` as the property name). The `error` method allows you to pass a callback that will receive an error notfication if anything fails. Note that calling `end` or `error` is what *starts* the unit of work handled by the context.
 
@@ -195,7 +219,7 @@ sql.getPlainContext( "example-1" )
 		// determine what's fed to this step's executable
 		// action. Let's pretend we fished out a particular
 		// user from the readUsers step and then did this:
-		var userId = getUserIdFrom( data.readUsers );
+		const userId = getUserIdFrom( data.readUsers );
 		execute( {
 			procedure: "GetExtendedUserInfo",
 			params: {
@@ -272,6 +296,26 @@ The column will be of the parameter's specified type.
 } )
 ```
 
+#### Passing a value list with `asList: true`
+
+Providing the `asList` property the Boolean value `true`,
+you can define a parameter list for use in an `IN` clause.
+The parameter name you provide will be transformed into a list of parameters, one for each provided value.
+These parameters will be of the parameter's specified type.
+
+```javascript
+.step( "selectChildren", {
+	query: "SELECT * FROM ParentChild WHERE ParentId IN @parentIds"
+	params: {
+		parentIds: {
+			val: [ 123, 456, 789 ],
+			type: sql.INT,
+			asList: true
+		}
+	}
+} )
+```
+
 #### Getting results in streams
 
 If you are expecting a particularly large result set, you might want to receive
@@ -321,7 +365,7 @@ of values keyed by column name.
 Streamed results can be very useful for piping into transforms,
 writing directly to the response stream, writing to a file, etc.
 
-### getTransactionContext( [connection] )
+### getTransactionContext( [connection], [dataForHooks] )
 The `getTransactionContext` method returns a `TransactionContext` instance - which for the most part is nearly identical to a `SqlContext` instance - however, a transaction is started as the context begins its work, and you have the option to commit or rollback in the `end` method's callback. For example:
 
 ```javascript
@@ -332,10 +376,28 @@ sql.addConnection( {
 	user: "username",
 	password: "pwd",
 	host: "127.0.0.1",
-	database: "master"
+	database: "master",
+	// optional code to run as the first step in a transaction
+	atTransactionStart( dataForHooks ) {
+		return {
+			procedure: "UpdateTracking",
+			params: {
+				userId: {
+					val: dataforHooks.userId,
+					type: sql.INT
+				}
+			}
+		};
+	},
+	// optional code to run as the last step in a transaction
+	atTransactionEnd( dataForHooks ) {
+		return {
+			procedure: "ClearTracking"
+		};
+	}
 })
 
-sql.getTransactionContext()
+sql.getTransactionContext( null, { userId: "1234" } )
 	.step( "readUsers", {
 		query: "select * From sys.sysusers"
 	} )
@@ -346,7 +408,7 @@ sql.getTransactionContext()
 		// determine what's fed to this step's executable
 		// action. Let's pretend we fished out a particular
 		// user from the readUsers step and then did this:
-		var userId = getUserIdFrom( data.readUsers );
+		const userId = getUserIdFrom( data.readUsers );
 		execute( {
 			procedure: "GetExtendedUserInfo",
 			params: {
@@ -375,18 +437,36 @@ sql.getTransactionContext()
 
 You can see that the main difference between a `SqlContext` and `TransactionContext` is that the argument passed to the `end` callback contains more than just the `sets` (data sets) in the `TransactionContext`. A `TransactionContext` does not automatically call `commit` for you - that's in your hands (for now). However, if an error occurs, it will call `rollback`.
 
-### executeTransaction( [connection,] queryOptions )
+### executeTransaction( [connection,] queryOptions, [dataForHooks] )
 This is a shortcut method to getting a `TransactionContext` instance to execute one step. It returns a promise, and the `result` argument that's normally fed to the `end` method's callback is passed to the success handler of the promise, and any errors are passed to the error handler. For example:
 
 ```javascript
 // re-use of this variable to API calls
 // will result in the same underlying pool
 // being used.
-var connection = {
+const connection = {
 	user: "username",
 	password: "pwd",
 	host: "127.0.0.1",
-	database: "master"
+	database: "master",
+	// optional code to run as the first step in a transaction
+	atTransactionStart( dataForHooks ) {
+		return {
+			procedure: "UpdateTracking",
+			params: {
+				userId: {
+					val: dataforHooks.userId,
+					type: sql.INT
+				}
+			}
+		};
+	},
+	// optional code to run as the last step in a transaction
+	atTransactionEnd( dataForHooks ) {
+		return {
+			procedure: "ClearTracking"
+		};
+	}
 };
 
 sql.executeTransaction( connection, {
@@ -424,7 +504,7 @@ This is a shortcut method to getting a `SqlContext` instance to execute one step
 // re-use of this variable to API calls
 // will result in the same underlying pool
 // being used.
-var connection = {
+const connection = {
 	user: "username",
 	password: "pwd",
 	host: "127.0.0.1",
@@ -475,7 +555,7 @@ The `TransactionContext` is mostly identical to the SqlContext, except that it h
 
 * You"ll need to run `npm install` at the root of this project once you clone it to install the dependencies.
 * To run unit tests: `npm test`
-* To run integration tests: `npm run intspec`
+* To run integration tests: `npm run test:int`
 * To run the example module: `npm run example`
 
 *Please* note that in order to run the integration tests, you will need to create a `local-config.json` file in the `spec/integration` directory, matching something similar to this:
